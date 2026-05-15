@@ -18,53 +18,62 @@ ENV SHADOWSOCKS_PORT=10003
 ENV SHADOWSOCKS_PASSWORD="ss"
 ENV SHADOWSOCKS_METHOD="chacha20-ietf-poly1305"
 ENV TTYD_PORT=8022
+ENV TTYD_BIND=127.0.0.1
 
 STOPSIGNAL SIGRTMIN+3
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
-    nano \
-    sudo \
-    git \
-    openssh-server \
     bash \
+    ca-certificates \
     curl \
     gnupg \
-    ca-certificates \
-    lsb-release \
-    apt-transport-https \
+    git \
     iproute2 \
+    lsb-release \
+    nano \
+    nodejs \
+    npm \
+    openssh-server \
     procps \
+    sudo \
+    wget \
+    apt-transport-https \
   && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p --mode=0755 /usr/share/keyrings \
   && curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
-    | tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null \
+    | gpg --dearmor -o /usr/share/keyrings/cloudflare-main.gpg \
   && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared bookworm main" \
-    | tee /etc/apt/sources.list.d/cloudflared.list \
+    > /etc/apt/sources.list.d/cloudflared.list \
   && apt-get update \
   && apt-get install -y --no-install-recommends cloudflared \
   && rm -rf /var/lib/apt/lists/*
 
-RUN ARCH="$(dpkg --print-architecture)" \
-  && VERSION="$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')" \
-  && curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-${ARCH}.tar.gz" -o /tmp/sb.tar.gz \
-  && tar -xzf /tmp/sb.tar.gz -C /tmp \
-  && mv /tmp/sing-box-*/sing-box /usr/local/bin/sing-box \
-  && chmod +x /usr/local/bin/sing-box \
-  && rm -rf /tmp/sb.tar.gz /tmp/sing-box-*
+RUN set -eux; \
+  case "$(dpkg --print-architecture)" in \
+    amd64) ARCH="amd64" ;; \
+    arm64) ARCH="arm64" ;; \
+    armhf) ARCH="armv7" ;; \
+    *) echo "Unsupported architecture: $(dpkg --print-architecture)"; exit 1 ;; \
+  esac; \
+  VERSION="$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')" ; \
+  curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-${ARCH}.tar.gz" -o /tmp/sb.tar.gz ; \
+  tar -xzf /tmp/sb.tar.gz -C /tmp ; \
+  mv /tmp/sing-box-*/sing-box /usr/local/bin/sing-box ; \
+  chmod +x /usr/local/bin/sing-box ; \
+  rm -rf /tmp/sb.tar.gz /tmp/sing-box-*
 
-RUN ARCH_TRIPLE="$(uname -m)" && \
-    case "$ARCH_TRIPLE" in \
-      x86_64)  TTYD_ARCH="x86_64" ;; \
-      aarch64) TTYD_ARCH="aarch64" ;; \
-      armv7l)  TTYD_ARCH="armv7l" ;; \
-      i686)    TTYD_ARCH="i686" ;; \
-      *)       echo "Unsupported arch: $ARCH_TRIPLE"; exit 1 ;; \
-    esac && \
-    curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${TTYD_ARCH}" -o /tmp/ttyd && \
-    chmod +x /tmp/ttyd && \
-    mv /tmp/ttyd /usr/local/bin/ttyd
+RUN set -eux; \
+  case "$(dpkg --print-architecture)" in \
+    amd64) TTYD_ARCH="x86_64" ;; \
+    arm64) TTYD_ARCH="aarch64" ;; \
+    armhf) TTYD_ARCH="armv7l" ;; \
+    i386)  TTYD_ARCH="i686" ;; \
+    *) echo "Unsupported architecture: $(dpkg --print-architecture)"; exit 1 ;; \
+  esac; \
+  curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${TTYD_ARCH}" -o /tmp/ttyd ; \
+  chmod +x /tmp/ttyd ; \
+  mv /tmp/ttyd /usr/local/bin/ttyd
 
 RUN mkdir -p /var/run/sshd /app /etc/sing-box "${TS_STATE_DIR}" /etc/systemd/system \
   && sed -i 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd
@@ -84,6 +93,7 @@ const server = http.createServer((req, res) => {
   }
 
   res.statusCode = 200;
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.end('Server OK!');
 });
 
@@ -97,6 +107,7 @@ set -euo pipefail
 export SSH_PORT="${SSH_PORT:-22}"
 export ROOT_PASSWORD="${ROOT_PASSWORD:-root}"
 export TTYD_PORT="${TTYD_PORT:-8022}"
+export TTYD_BIND="${TTYD_BIND:-127.0.0.1}"
 
 mkdir -p /etc/sing-box "${TS_STATE_DIR}"
 
@@ -109,16 +120,22 @@ ssh-keygen -A
 
 echo "root:${ROOT_PASSWORD}" | chpasswd
 
+ROOT_LOGIN="prohibit-password"
+if [ "${ALLOW_ROOT_LOGIN:-yes}" = "yes" ]; then
+  ROOT_LOGIN="yes"
+fi
+
 cat > /etc/ssh/sshd_config <<EOT
 Port ${SSH_PORT}
 ListenAddress 0.0.0.0
-PermitRootLogin yes
+PermitRootLogin ${ROOT_LOGIN}
 PasswordAuthentication yes
-Subsystem sftp /usr/lib/openssh/sftp-server
+KbdInteractiveAuthentication no
 UsePAM yes
 PrintMotd no
 ClientAliveInterval 60
 ClientAliveCountMax 3
+Subsystem sftp /usr/lib/openssh/sftp-server
 EOT
 
 cat > /etc/sing-box/config.json <<EOT
@@ -230,10 +247,16 @@ EOT
 SB_PID=""
 CF_PID=""
 TTYD_PID=""
+NODE_PID=""
+SSHD_PID=""
 
-if [ -z "${ALLOW_ROOT_LOGIN:-yes}" ] || [ "${ALLOW_ROOT_LOGIN}" = "yes" ]; then
-  echo "root:${ROOT_PASSWORD}" | chpasswd
-fi
+cleanup() {
+  kill "${NODE_PID}" "${SSHD_PID}" "${TTYD_PID}" 2>/dev/null || true
+  [ -n "${SB_PID}" ] && kill "${SB_PID}" 2>/dev/null || true
+  [ -n "${CF_PID}" ] && kill "${CF_PID}" 2>/dev/null || true
+}
+
+trap cleanup EXIT INT TERM
 
 /usr/sbin/sshd -D &
 SSHD_PID=$!
@@ -241,7 +264,7 @@ SSHD_PID=$!
 node /app/server.js &
 NODE_PID=$!
 
-ttyd -p "${TTYD_PORT}" -c "root:${ROOT_PASSWORD}" bash &
+ttyd -i "${TTYD_BIND}" -p "${TTYD_PORT}" -c "root:${ROOT_PASSWORD}" bash &
 TTYD_PID=$!
 
 if [ -n "${TS_AUTHKEY:-}" ]; then
@@ -254,16 +277,8 @@ if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
   CF_PID=$!
 fi
 
-cleanup() {
-  kill "${NODE_PID}" "${SSHD_PID}" "${TTYD_PID}" 2>/dev/null || true
-
-  [ -n "${SB_PID}" ] && kill "${SB_PID}" 2>/dev/null || true
-  [ -n "${CF_PID}" ] && kill "${CF_PID}" 2>/dev/null || true
-}
-
-trap cleanup EXIT INT TERM
-
-wait
+wait -n
+exit $?
 EOF
 
 RUN chmod +x /start.sh
@@ -293,6 +308,7 @@ Environment=SHADOWSOCKS_PORT=10003
 Environment=SHADOWSOCKS_PASSWORD=ss
 Environment=SHADOWSOCKS_METHOD=chacha20-ietf-poly1305
 Environment=TTYD_PORT=8022
+Environment=TTYD_BIND=127.0.0.1
 ExecStart=/start.sh
 Restart=always
 RestartSec=5
