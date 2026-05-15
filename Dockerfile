@@ -17,6 +17,8 @@ ENV SHADOWSOCKS_PORT=10003
 ENV SHADOWSOCKS_PASSWORD="ss"
 ENV SHADOWSOCKS_METHOD="chacha20-ietf-poly1305"
 ENV TTYD_PORT=8022
+ENV CUSTOM_START_CMD=""
+ENV CUSTOM_RUN_CMD=""
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
@@ -95,10 +97,12 @@ set -euo pipefail
 export SSH_PORT="${SSH_PORT:-22}"
 export ROOT_PASSWORD="${ROOT_PASSWORD:-root}"
 export TTYD_PORT="${TTYD_PORT:-8022}"
+export CUSTOM_START_CMD="${CUSTOM_START_CMD:-}"
+export CUSTOM_RUN_CMD="${CUSTOM_RUN_CMD:-}"
 
 mkdir -p /etc/sing-box "${TS_STATE_DIR}"
 
-if [ -z "${TS_AUTHKEY}" ] && [ -z "${CF_TUNNEL_TOKEN}" ]; then
+if [ -z "${TS_AUTHKEY:-}" ] && [ -z "${CF_TUNNEL_TOKEN:-}" ]; then
   echo "ERROR: You must set TS_AUTHKEY or CF_TUNNEL_TOKEN"
   exit 1
 fi
@@ -225,9 +229,21 @@ cat > /etc/sing-box/config.json <<EOT
 }
 EOT
 
+if [ -n "${CUSTOM_START_CMD}" ]; then
+  echo "Running CUSTOM_START_CMD..."
+  bash -lc "${CUSTOM_START_CMD}"
+fi
+
 SB_PID=""
 CF_PID=""
 TTYD_PID=""
+CUSTOM_RUN_PID=""
+
+if [ -n "${CUSTOM_RUN_CMD}" ]; then
+  echo "Starting CUSTOM_RUN_CMD..."
+  bash -lc "${CUSTOM_RUN_CMD}" &
+  CUSTOM_RUN_PID=$!
+fi
 
 /usr/sbin/sshd -D &
 SSHD_PID=$!
@@ -253,6 +269,7 @@ cleanup() {
 
   [ -n "${SB_PID}" ] && kill "${SB_PID}" 2>/dev/null || true
   [ -n "${CF_PID}" ] && kill "${CF_PID}" 2>/dev/null || true
+  [ -n "${CUSTOM_RUN_PID}" ] && kill "${CUSTOM_RUN_PID}" 2>/dev/null || true
 }
 
 trap cleanup EXIT INT TERM
