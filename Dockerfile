@@ -8,6 +8,14 @@ ENV TS_AUTHKEY=""
 ENV TS_HOSTNAME=my-node
 ENV TS_STATE_DIR=/var/lib/tailscale
 ENV CF_TUNNEL_TOKEN=""
+ENV MIXED_PORT=3128
+ENV VLESS_PORT=10001
+ENV VLESS_UUID="d342d11e-d424-4583-b36e-524ab1f0afa4"
+ENV TROJAN_PORT=10002
+ENV TROJAN_PASSWORD="trojan"
+ENV SHADOWSOCKS_PORT=10003
+ENV SHADOWSOCKS_PASSWORD="ss"
+ENV SHADOWSOCKS_METHOD="chacha20-ietf-poly1305"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-server \
@@ -114,6 +122,44 @@ cat > /etc/sing-box/config.json <<EOT
       }
     ]
   },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "0.0.0.0",
+      "listen_port": ${MIXED_PORT}
+    },
+    {
+      "type": "vless",
+      "tag": "vless-in",
+      "listen": "0.0.0.0",
+      "listen_port": ${VLESS_PORT},
+      "users": [
+        {
+          "uuid": "${VLESS_UUID}"
+        }
+      ]
+    },
+    {
+      "type": "trojan",
+      "tag": "trojan-in",
+      "listen": "0.0.0.0",
+      "listen_port": ${TROJAN_PORT},
+      "users": [
+        {
+          "password": "${TROJAN_PASSWORD}"
+        }
+      ]
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "shadowsocks-in",
+      "listen": "0.0.0.0",
+      "listen_port": ${SHADOWSOCKS_PORT},
+      "method": "${SHADOWSOCKS_METHOD}",
+      "password": "${SHADOWSOCKS_PASSWORD}"
+    }
+  ],
   "endpoints": [
     {
       "type": "tailscale",
@@ -131,8 +177,32 @@ cat > /etc/sing-box/config.json <<EOT
     }
   ],
   "route": {
+    "rules": [
+      {
+        "inbound": [
+          "mixed-in",
+          "vless-in",
+          "trojan-in",
+          "shadowsocks-in"
+        ],
+        "action": "sniff"
+      },
+      {
+        "inbound": [
+          "mixed-in",
+          "vless-in",
+          "trojan-in",
+          "shadowsocks-in"
+        ],
+        "action": "resolve",
+        "server": "dns-local"
+      }
+    ],
+    "final": "direct",
     "auto_detect_interface": true,
-    "default_domain_resolver": "dns-local"
+    "default_domain_resolver": {
+      "server": "dns-local"
+    }
   }
 }
 EOT
@@ -152,23 +222,15 @@ if [ -n "${TS_AUTHKEY}" ]; then
 fi
 
 if [ -n "${CF_TUNNEL_TOKEN}" ]; then
-  cloudflared tunnel \
-    --no-autoupdate \
-    run \
-    --token "${CF_TUNNEL_TOKEN}" &
+  cloudflared tunnel --no-autoupdate run --token "${CF_TUNNEL_TOKEN}" &
   CF_PID=$!
 fi
 
 cleanup() {
   kill "${NODE_PID}" "${SSHD_PID}" 2>/dev/null || true
 
-  if [ -n "${SB_PID:-}" ]; then
-    kill "${SB_PID}" 2>/dev/null || true
-  fi
-
-  if [ -n "${CF_PID:-}" ]; then
-    kill "${CF_PID}" 2>/dev/null || true
-  fi
+  [ -n "${SB_PID}" ] && kill "${SB_PID}" 2>/dev/null || true
+  [ -n "${CF_PID}" ] && kill "${CF_PID}" 2>/dev/null || true
 }
 
 trap cleanup EXIT INT TERM
@@ -178,10 +240,11 @@ EOF
 
 RUN chmod +x /start.sh
 
-EXPOSE 8000 22
+EXPOSE 8000 22 3128 10001 10002 10003
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/generate_204" || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
+
 CMD ["/start.sh"]
