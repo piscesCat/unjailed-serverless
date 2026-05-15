@@ -21,6 +21,7 @@ ENV TTYD_PORT=8022
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     nano \
+    sudo \
     git \
     openssh-server \
     bash \
