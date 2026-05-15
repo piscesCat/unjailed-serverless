@@ -16,8 +16,12 @@ ENV TROJAN_PASSWORD="trojan"
 ENV SHADOWSOCKS_PORT=10003
 ENV SHADOWSOCKS_PASSWORD="ss"
 ENV SHADOWSOCKS_METHOD="chacha20-ietf-poly1305"
+ENV TTYD_PORT=8022
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    nano \
+    git \
     openssh-server \
     bash \
     curl \
@@ -46,6 +50,18 @@ RUN ARCH="$(dpkg --print-architecture)" \
   && mv /tmp/sing-box-*/sing-box /usr/local/bin/sing-box \
   && chmod +x /usr/local/bin/sing-box \
   && rm -rf /tmp/sb.tar.gz /tmp/sing-box-*
+
+RUN ARCH_TRIPLE="$(uname -m)" && \
+    case "$ARCH_TRIPLE" in \
+      x86_64)  TTYD_ARCH="x86_64" ;; \
+      aarch64) TTYD_ARCH="aarch64" ;; \
+      armv7l)  TTYD_ARCH="armv7l" ;; \
+      i686)    TTYD_ARCH="i686" ;; \
+      *)       echo "Unsupported arch: $ARCH_TRIPLE"; exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${TTYD_ARCH}" -o /tmp/ttyd && \
+    chmod +x /tmp/ttyd && \
+    mv /tmp/ttyd /usr/local/bin/ttyd
 
 RUN mkdir -p /var/run/sshd /app /etc/sing-box "${TS_STATE_DIR}" \
   && sed -i 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd
@@ -77,6 +93,7 @@ set -euo pipefail
 
 export SSH_PORT="${SSH_PORT:-22}"
 export ROOT_PASSWORD="${ROOT_PASSWORD:-root}"
+export TTYD_PORT="${TTYD_PORT:-8022}"
 
 mkdir -p /etc/sing-box "${TS_STATE_DIR}"
 
@@ -209,12 +226,16 @@ EOT
 
 SB_PID=""
 CF_PID=""
+TTYD_PID=""
 
 /usr/sbin/sshd -D &
 SSHD_PID=$!
 
 node /app/server.js &
 NODE_PID=$!
+
+ttyd -p "${TTYD_PORT}" -c "root:${ROOT_PASSWORD}" bash &
+TTYD_PID=$!
 
 if [ -n "${TS_AUTHKEY}" ]; then
   sing-box run -c /etc/sing-box/config.json &
@@ -227,7 +248,7 @@ if [ -n "${CF_TUNNEL_TOKEN}" ]; then
 fi
 
 cleanup() {
-  kill "${NODE_PID}" "${SSHD_PID}" 2>/dev/null || true
+  kill "${NODE_PID}" "${SSHD_PID}" "${TTYD_PID}" 2>/dev/null || true
 
   [ -n "${SB_PID}" ] && kill "${SB_PID}" 2>/dev/null || true
   [ -n "${CF_PID}" ] && kill "${CF_PID}" 2>/dev/null || true
@@ -240,7 +261,7 @@ EOF
 
 RUN chmod +x /start.sh
 
-EXPOSE 8000 22 3128 10001 10002 10003
+EXPOSE 8000 22 3128 10001 10002 10003 8022
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/generate_204" || exit 1
