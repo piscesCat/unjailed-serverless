@@ -1,4 +1,4 @@
-FROM node:22-bookworm
+FROM litespeedtech/litespeed:latest
 
 ENV PORT=8000
 ENV SSH_PORT=22
@@ -35,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     iproute2 \
     procps \
+    socat \
   && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p --mode=0755 /usr/share/keyrings \
@@ -66,29 +67,8 @@ RUN ARCH_TRIPLE="$(uname -m)" && \
     chmod +x /tmp/ttyd && \
     mv /tmp/ttyd /usr/local/bin/ttyd
 
-RUN mkdir -p /var/run/sshd /app /etc/sing-box "${TS_STATE_DIR}" \
+RUN mkdir -p /var/run/sshd /app /var/www/vhosts/localhost/html /usr/local/lsws/Example/html "${TS_STATE_DIR}" \
   && sed -i 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd
-
-RUN cat > /app/server.js <<'EOF'
-const http = require('http');
-
-const port = Number.parseInt(process.env.PORT || '8000', 10);
-
-const server = http.createServer((req, res) => {
-  const path = (req.url || '/').split('?')[0];
-
-  if (path === '/generate_204') {
-    res.statusCode = 204;
-    res.end();
-    return;
-  }
-
-  res.statusCode = 200;
-  res.end('Server OK!');
-});
-
-server.listen(port, '0.0.0.0');
-EOF
 
 RUN cat > /start.sh <<'EOF'
 #!/usr/bin/env bash
@@ -97,18 +77,24 @@ set -euo pipefail
 export SSH_PORT="${SSH_PORT:-22}"
 export ROOT_PASSWORD="${ROOT_PASSWORD:-root}"
 export TTYD_PORT="${TTYD_PORT:-8022}"
+export PORT="${PORT:-8000}"
 export CUSTOM_START_CMD="${CUSTOM_START_CMD:-}"
 export CUSTOM_RUN_CMD="${CUSTOM_RUN_CMD:-}"
 
-mkdir -p /etc/sing-box "${TS_STATE_DIR}"
+mkdir -p /var/www/vhosts/localhost/html /usr/local/lsws/Example/html "${TS_STATE_DIR}"
 
-if [ -z "${TS_AUTHKEY:-}" ] && [ -z "${CF_TUNNEL_TOKEN:-}" ]; then
-  echo "ERROR: You must set TS_AUTHKEY or CF_TUNNEL_TOKEN"
-  exit 1
+for root in /var/www/vhosts/localhost/html /usr/local/lsws/Example/html; do
+  mkdir -p "${root}"
+  printf 'Server OK!\n' > "${root}/index.html"
+  : > "${root}/generate_204"
+done
+
+if [ -n "${CUSTOM_START_CMD}" ]; then
+  echo "Running CUSTOM_START_CMD..."
+  bash -lc "${CUSTOM_START_CMD}"
 fi
 
 ssh-keygen -A
-
 echo "root:${ROOT_PASSWORD}" | chpasswd
 
 cat > /etc/ssh/sshd_config <<EOT
@@ -123,136 +109,28 @@ ClientAliveInterval 60
 ClientAliveCountMax 3
 EOT
 
-cat > /etc/sing-box/config.json <<EOT
-{
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "dns": {
-    "servers": [
-      {
-        "type": "local",
-        "tag": "dns-local"
-      },
-      {
-        "type": "https",
-        "tag": "dns-remote",
-        "server": "1.1.1.1",
-        "server_port": 443,
-        "path": "/dns-query"
-      }
-    ]
-  },
-  "inbounds": [
-    {
-      "type": "mixed",
-      "tag": "mixed-in",
-      "listen": "0.0.0.0",
-      "listen_port": ${MIXED_PORT}
-    },
-    {
-      "type": "vless",
-      "tag": "vless-in",
-      "listen": "0.0.0.0",
-      "listen_port": ${VLESS_PORT},
-      "users": [
-        {
-          "uuid": "${VLESS_UUID}"
-        }
-      ]
-    },
-    {
-      "type": "trojan",
-      "tag": "trojan-in",
-      "listen": "0.0.0.0",
-      "listen_port": ${TROJAN_PORT},
-      "users": [
-        {
-          "password": "${TROJAN_PASSWORD}"
-        }
-      ]
-    },
-    {
-      "type": "shadowsocks",
-      "tag": "shadowsocks-in",
-      "listen": "0.0.0.0",
-      "listen_port": ${SHADOWSOCKS_PORT},
-      "method": "${SHADOWSOCKS_METHOD}",
-      "password": "${SHADOWSOCKS_PASSWORD}"
-    }
-  ],
-  "endpoints": [
-    {
-      "type": "tailscale",
-      "tag": "tailscale-ep",
-      "state_directory": "${TS_STATE_DIR}",
-      "auth_key": "${TS_AUTHKEY}",
-      "hostname": "${TS_HOSTNAME}",
-      "system_interface": false
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
-  ],
-  "route": {
-    "rules": [
-      {
-        "inbound": [
-          "mixed-in",
-          "vless-in",
-          "trojan-in",
-          "shadowsocks-in"
-        ],
-        "action": "sniff"
-      },
-      {
-        "inbound": [
-          "mixed-in",
-          "vless-in",
-          "trojan-in",
-          "shadowsocks-in"
-        ],
-        "action": "resolve",
-        "server": "dns-local"
-      }
-    ],
-    "final": "direct",
-    "auto_detect_interface": true,
-    "default_domain_resolver": {
-      "server": "dns-local"
-    }
-  }
-}
-EOT
-
-if [ -n "${CUSTOM_START_CMD}" ]; then
-  echo "Running CUSTOM_START_CMD..."
-  bash -lc "${CUSTOM_START_CMD}"
-fi
-
 SB_PID=""
 CF_PID=""
 TTYD_PID=""
 CUSTOM_RUN_PID=""
+SOCK_PID=""
+
+/usr/local/lsws/bin/lswsctrl start
+
+socat TCP-LISTEN:"${PORT}",fork,reuseaddr TCP:127.0.0.1:80 &
+SOCK_PID=$!
+
+/usr/sbin/sshd -D &
+SSHD_PID=$!
+
+ttyd -p "${TTYD_PORT}" -c "root:${ROOT_PASSWORD}" bash &
+TTYD_PID=$!
 
 if [ -n "${CUSTOM_RUN_CMD}" ]; then
   echo "Starting CUSTOM_RUN_CMD..."
   bash -lc "${CUSTOM_RUN_CMD}" &
   CUSTOM_RUN_PID=$!
 fi
-
-/usr/sbin/sshd -D &
-SSHD_PID=$!
-
-node /app/server.js &
-NODE_PID=$!
-
-ttyd -p "${TTYD_PORT}" -c "root:${ROOT_PASSWORD}" bash &
-TTYD_PID=$!
 
 if [ -n "${TS_AUTHKEY}" ]; then
   sing-box run -c /etc/sing-box/config.json &
@@ -265,11 +143,13 @@ if [ -n "${CF_TUNNEL_TOKEN}" ]; then
 fi
 
 cleanup() {
-  kill "${NODE_PID}" "${SSHD_PID}" "${TTYD_PID}" 2>/dev/null || true
-
+  [ -n "${SOCK_PID}" ] && kill "${SOCK_PID}" 2>/dev/null || true
+  [ -n "${TTYD_PID}" ] && kill "${TTYD_PID}" 2>/dev/null || true
+  [ -n "${SSHD_PID}" ] && kill "${SSHD_PID}" 2>/dev/null || true
   [ -n "${SB_PID}" ] && kill "${SB_PID}" 2>/dev/null || true
   [ -n "${CF_PID}" ] && kill "${CF_PID}" 2>/dev/null || true
   [ -n "${CUSTOM_RUN_PID}" ] && kill "${CUSTOM_RUN_PID}" 2>/dev/null || true
+  /usr/local/lsws/bin/lswsctrl stop >/dev/null 2>&1 || true
 }
 
 trap cleanup EXIT INT TERM
@@ -279,7 +159,7 @@ EOF
 
 RUN chmod +x /start.sh
 
-EXPOSE 8000 22 3128 10001 10002 10003 8022
+EXPOSE 8000 80 443 7080 22 3128 10001 10002 10003 8022
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/generate_204" || exit 1
