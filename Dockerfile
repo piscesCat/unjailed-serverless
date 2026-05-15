@@ -1,5 +1,6 @@
-FROM node:20-bookworm-slim
+FROM jrei/systemd-debian:latest
 
+ENV container=docker
 ENV PORT=8000
 ENV SSH_PORT=22
 ENV ROOT_PASSWORD=root
@@ -18,6 +19,8 @@ ENV SHADOWSOCKS_PASSWORD="ss"
 ENV SHADOWSOCKS_METHOD="chacha20-ietf-poly1305"
 ENV TTYD_PORT=8022
 
+STOPSIGNAL SIGRTMIN+3
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     nano \
@@ -30,7 +33,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     lsb-release \
     apt-transport-https \
-    tini \
     iproute2 \
     procps \
   && rm -rf /var/lib/apt/lists/*
@@ -64,7 +66,7 @@ RUN ARCH_TRIPLE="$(uname -m)" && \
     chmod +x /tmp/ttyd && \
     mv /tmp/ttyd /usr/local/bin/ttyd
 
-RUN mkdir -p /var/run/sshd /app /etc/sing-box "${TS_STATE_DIR}" \
+RUN mkdir -p /var/run/sshd /app /etc/sing-box "${TS_STATE_DIR}" /etc/systemd/system \
   && sed -i 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd
 
 RUN cat > /app/server.js <<'EOF'
@@ -98,7 +100,7 @@ export TTYD_PORT="${TTYD_PORT:-8022}"
 
 mkdir -p /etc/sing-box "${TS_STATE_DIR}"
 
-if [ -z "${TS_AUTHKEY}" ] && [ -z "${CF_TUNNEL_TOKEN}" ]; then
+if [ -z "${TS_AUTHKEY:-}" ] && [ -z "${CF_TUNNEL_TOKEN:-}" ]; then
   echo "ERROR: You must set TS_AUTHKEY or CF_TUNNEL_TOKEN"
   exit 1
 fi
@@ -229,6 +231,10 @@ SB_PID=""
 CF_PID=""
 TTYD_PID=""
 
+if [ -z "${ALLOW_ROOT_LOGIN:-yes}" ] || [ "${ALLOW_ROOT_LOGIN}" = "yes" ]; then
+  echo "root:${ROOT_PASSWORD}" | chpasswd
+fi
+
 /usr/sbin/sshd -D &
 SSHD_PID=$!
 
@@ -238,12 +244,12 @@ NODE_PID=$!
 ttyd -p "${TTYD_PORT}" -c "root:${ROOT_PASSWORD}" bash &
 TTYD_PID=$!
 
-if [ -n "${TS_AUTHKEY}" ]; then
+if [ -n "${TS_AUTHKEY:-}" ]; then
   sing-box run -c /etc/sing-box/config.json &
   SB_PID=$!
 fi
 
-if [ -n "${CF_TUNNEL_TOKEN}" ]; then
+if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
   cloudflared tunnel --no-autoupdate run --token "${CF_TUNNEL_TOKEN}" &
   CF_PID=$!
 fi
@@ -262,11 +268,45 @@ EOF
 
 RUN chmod +x /start.sh
 
+RUN cat > /etc/systemd/system/my-node.service <<'EOF'
+[Unit]
+Description=My Node Stack
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PORT=8000
+Environment=SSH_PORT=22
+Environment=ROOT_PASSWORD=root
+Environment=ALLOW_ROOT_LOGIN=yes
+Environment=TS_AUTHKEY=
+Environment=TS_HOSTNAME=my-node
+Environment=TS_STATE_DIR=/var/lib/tailscale
+Environment=CF_TUNNEL_TOKEN=
+Environment=MIXED_PORT=3128
+Environment=VLESS_PORT=10001
+Environment=VLESS_UUID=d342d11e-d424-4583-b36e-524ab1f0afa4
+Environment=TROJAN_PORT=10002
+Environment=TROJAN_PASSWORD=trojan
+Environment=SHADOWSOCKS_PORT=10003
+Environment=SHADOWSOCKS_PASSWORD=ss
+Environment=SHADOWSOCKS_METHOD=chacha20-ietf-poly1305
+Environment=TTYD_PORT=8022
+ExecStart=/start.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+RUN mkdir -p /etc/systemd/system/multi-user.target.wants \
+  && ln -sf /etc/systemd/system/my-node.service /etc/systemd/system/multi-user.target.wants/my-node.service
+
 EXPOSE 8000 22 3128 10001 10002 10003 8022
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/generate_204" || exit 1
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
-
-CMD ["/start.sh"]
+CMD ["/sbin/init"]
