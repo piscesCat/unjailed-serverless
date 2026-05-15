@@ -1,4 +1,4 @@
-FROM litespeedtech/litespeed:latest
+FROM litespeedtech/openlitespeed:latest
 
 ENV PORT=8000
 ENV SSH_PORT=22
