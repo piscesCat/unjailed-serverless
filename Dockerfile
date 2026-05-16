@@ -1,6 +1,7 @@
 FROM litespeedtech/openlitespeed:latest
 
 ENV PORT=8000
+ENV SSL_PORT=8443
 ENV SSH_PORT=22
 ENV ROOT_PASSWORD=root
 ENV ALLOW_ROOT_LOGIN=yes
@@ -79,6 +80,7 @@ export SSH_PORT="${SSH_PORT:-22}"
 export ROOT_PASSWORD="${ROOT_PASSWORD:-root}"
 export TTYD_PORT="${TTYD_PORT:-8022}"
 export PORT="${PORT:-8000}"
+export SSL_PORT="${SSL_PORT:-8443}"
 export CUSTOM_START_CMD="${CUSTOM_START_CMD:-}"
 export CUSTOM_RUN_CMD="${CUSTOM_RUN_CMD:-}"
 export OLS_PASSWORD="${OLS_PASSWORD:-123456}"
@@ -225,8 +227,8 @@ cleanup_ols_config() {
 
     [ -f "$cfg" ] || return 0
 
-    sed -i -E "s/(address[[:space:]]+\*:)80/\1${PORT}/g" "$cfg"
-    sed -i -E "/listener[[:space:]]+DefaultSSL[[:space:]]*\{/,/^[[:space:]]*\}/d" "$cfg"
+    sed -i -E "s#(\*:[[:space:]]*)80([^0-9]|$)#\1${PORT}\2#g" "$cfg"
+    sed -i -E "s#(\*:[[:space:]]*)443([^0-9]|$)#\1${SSL_PORT}\2#g" "$cfg"
 }
 
 SB_PID=""
