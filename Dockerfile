@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nano \
     sudo \
     git \
+    apt-utils \
     openssh-server \
     bash \
     curl \
