@@ -94,6 +94,22 @@ if [ -n "${CUSTOM_START_CMD}" ]; then
   bash -lc "${CUSTOM_START_CMD}"
 fi
 
+configure_ols() {
+  local cfg="/usr/local/lsws/conf/httpd_config.conf"
+
+  [ -f "$cfg" ] || return 0
+
+  sed -i -E "s/(address[[:space:]]+\*:)80/\1${PORT}/g" "$cfg"
+
+  awk '
+    BEGIN { skip=0 }
+    /^[[:space:]]*listener[[:space:]]+DefaultSSL[[:space:]]*\{/ { skip=1; next }
+    skip && /^[[:space:]]*\}/ { skip=0; next }
+    skip { next }
+    { print }
+  ' "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
+}
+
 ssh-keygen -A
 echo "root:${ROOT_PASSWORD}" | chpasswd
 
@@ -113,12 +129,9 @@ SB_PID=""
 CF_PID=""
 TTYD_PID=""
 CUSTOM_RUN_PID=""
-SOCK_PID=""
 
+configure_ols
 /usr/local/lsws/bin/lswsctrl start
-
-socat TCP-LISTEN:"${PORT}",fork,reuseaddr TCP:127.0.0.1:80 &
-SOCK_PID=$!
 
 /usr/sbin/sshd -D &
 SSHD_PID=$!
@@ -143,7 +156,6 @@ if [ -n "${CF_TUNNEL_TOKEN}" ]; then
 fi
 
 cleanup() {
-  [ -n "${SOCK_PID}" ] && kill "${SOCK_PID}" 2>/dev/null || true
   [ -n "${TTYD_PID}" ] && kill "${TTYD_PID}" 2>/dev/null || true
   [ -n "${SSHD_PID}" ] && kill "${SSHD_PID}" 2>/dev/null || true
   [ -n "${SB_PID}" ] && kill "${SB_PID}" 2>/dev/null || true
@@ -159,7 +171,7 @@ EOF
 
 RUN chmod +x /start.sh
 
-EXPOSE 8000 80 443 7080 22 3128 10001 10002 10003 8022
+EXPOSE 8000 7080 22 3128 10001 10002 10003 8022
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/generate_204" || exit 1
