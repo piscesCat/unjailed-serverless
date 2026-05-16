@@ -19,6 +19,7 @@ ENV SHADOWSOCKS_METHOD="chacha20-ietf-poly1305"
 ENV TTYD_PORT=8022
 ENV CUSTOM_START_CMD=""
 ENV CUSTOM_RUN_CMD=""
+ENV OLS_PASSWORD="123456"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
@@ -80,6 +81,7 @@ export TTYD_PORT="${TTYD_PORT:-8022}"
 export PORT="${PORT:-8000}"
 export CUSTOM_START_CMD="${CUSTOM_START_CMD:-}"
 export CUSTOM_RUN_CMD="${CUSTOM_RUN_CMD:-}"
+export OLS_PASSWORD="${OLS_PASSWORD:-123456}"
 
 mkdir -p /etc/sing-box "${TS_STATE_DIR}" /var/www/vhosts/localhost/html
 
@@ -233,6 +235,13 @@ CUSTOM_RUN_PID=""
 SSHD_PID=""
 
 cleanup_ols_config
+
+/usr/local/lsws/admin/misc/admpass.sh <<EOF
+admin
+${OLS_PASSWORD}
+${OLS_PASSWORD}
+EOF
+
 /usr/local/lsws/bin/lswsctrl start
 
 /usr/sbin/sshd -D &
@@ -267,7 +276,7 @@ EOF
 
 RUN chmod +x /start.sh
 
-EXPOSE 8000 22 3128 10001 10002 10003 8022
+EXPOSE 8000 22 3128 10001 10002 10003 8022 7080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/generate_204" || exit 1
