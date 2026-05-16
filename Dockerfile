@@ -1,7 +1,7 @@
 FROM litespeedtech/openlitespeed:latest
 
 ENV PORT=8000
-ENV SSL_PORT=8443
+ENV HTTPS_PORT=8443
 ENV SSH_PORT=22
 ENV ROOT_PASSWORD=root
 ENV ALLOW_ROOT_LOGIN=yes
@@ -80,7 +80,7 @@ export SSH_PORT="${SSH_PORT:-22}"
 export ROOT_PASSWORD="${ROOT_PASSWORD:-root}"
 export TTYD_PORT="${TTYD_PORT:-8022}"
 export PORT="${PORT:-8000}"
-export SSL_PORT="${SSL_PORT:-8443}"
+export HTTPS_PORT="${HTTPS_PORT:-8443}"
 export CUSTOM_START_CMD="${CUSTOM_START_CMD:-}"
 export CUSTOM_RUN_CMD="${CUSTOM_RUN_CMD:-}"
 export OLS_PASSWORD="${OLS_PASSWORD:-123456}"
@@ -227,8 +227,8 @@ cleanup_ols_config() {
 
     [ -f "$cfg" ] || return 0
 
-    sed -i -E "s#(\*:[[:space:]]*)10000([^0-9]|$)#\1${PORT}\2#g" "$cfg"
-    sed -i -E "s#(\*:[[:space:]]*)443([^0-9]|$)#\1${SSL_PORT}\2#g" "$cfg"
+    sed -i -E "s#(\*:[[:space:]]*)80([^0-9]|$)#\1${PORT}\2#g" "$cfg"
+    sed -i -E "s#(\*:[[:space:]]*)443([^0-9]|$)#\1${HTTPS_PORT}\2#g" "$cfg"
 }
 
 SB_PID=""
@@ -280,7 +280,7 @@ SCRIPT_EOF
 
 RUN chmod +x /start.sh
 
-EXPOSE 8000 22 3128 10001 10002 10003 8022 7080 8443 8080
+EXPOSE 8000 22 3128 10001 10002 10003 8022 7080 8088 8443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 CMD curl -fsS "http://127.0.0.1:${PORT}/generate_204" || exit 1
