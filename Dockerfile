@@ -227,7 +227,7 @@ cleanup_ols_config() {
 
     [ -f "$cfg" ] || return 0
 
-    sed -i -E "s#(\*:[[:space:]]*)80([^0-9]|$)#\1${PORT}\2#g" "$cfg"
+    sed -i -E "s#(\*:[[:space:]]*)10000([^0-9]|$)#\1${PORT}\2#g" "$cfg"
     sed -i -E "s#(\*:[[:space:]]*)443([^0-9]|$)#\1${SSL_PORT}\2#g" "$cfg"
 }
 
@@ -280,7 +280,7 @@ SCRIPT_EOF
 
 RUN chmod +x /start.sh
 
-EXPOSE 8000 22 3128 10001 10002 10003 8022 7080
+EXPOSE 8000 22 3128 10001 10002 10003 8022 7080 8443 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 CMD curl -fsS "http://127.0.0.1:${PORT}/generate_204" || exit 1
