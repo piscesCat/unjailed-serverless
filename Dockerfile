@@ -182,7 +182,35 @@ cat > /etc/sing-box/config.json <<SB_EOF
       "type": "direct",
       "tag": "direct"
     }
-  ]
+  ],
+  "route": {
+    "rules": [
+      {
+        "inbound": [
+          "mixed-in",
+          "vless-in",
+          "trojan-in",
+          "shadowsocks-in"
+        ],
+        "action": "sniff"
+      },
+      {
+        "inbound": [
+          "mixed-in",
+          "vless-in",
+          "trojan-in",
+          "shadowsocks-in"
+        ],
+        "action": "resolve",
+        "server": "dns-local"
+      }
+    ],
+    "final": "direct",
+    "auto_detect_interface": true,
+    "default_domain_resolver": {
+      "server": "dns-local"
+    }
+  }
 }
 SB_EOF
 
