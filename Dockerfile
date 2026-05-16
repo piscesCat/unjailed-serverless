@@ -10,16 +10,16 @@ ENV TS_STATE_DIR=/var/lib/tailscale
 ENV CF_TUNNEL_TOKEN=""
 ENV MIXED_PORT=3128
 ENV VLESS_PORT=10001
-ENV VLESS_UUID="d342d11e-d424-4583-b36e-524ab1f0afa4"
+ENV VLESS_UUID=d342d11e-d424-4583-b36e-524ab1f0afa4
 ENV TROJAN_PORT=10002
-ENV TROJAN_PASSWORD="trojan"
+ENV TROJAN_PASSWORD=trojan
 ENV SHADOWSOCKS_PORT=10003
-ENV SHADOWSOCKS_PASSWORD="ss"
-ENV SHADOWSOCKS_METHOD="chacha20-ietf-poly1305"
+ENV SHADOWSOCKS_PASSWORD=ss
+ENV SHADOWSOCKS_METHOD=chacha20-ietf-poly1305
 ENV TTYD_PORT=8022
 ENV CUSTOM_START_CMD=""
 ENV CUSTOM_RUN_CMD=""
-ENV OLS_PASSWORD="123456"
+ENV OLS_PASSWORD=123456
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
@@ -37,24 +37,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     procps \
     socat \
-  && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p --mode=0755 /usr/share/keyrings \
-  && curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+    && curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
     | tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null \
-  && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared bookworm main" \
+    && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared bookworm main" \
     | tee /etc/apt/sources.list.d/cloudflared.list \
-  && apt-get update \
-  && apt-get install -y --no-install-recommends cloudflared \
-  && rm -rf /var/lib/apt/lists/*
+    && apt-get update \
+    && apt-get install -y --no-install-recommends cloudflared \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN ARCH="$(dpkg --print-architecture)" \
-  && VERSION="$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')" \
-  && curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-${ARCH}.tar.gz" -o /tmp/sb.tar.gz \
-  && tar -xzf /tmp/sb.tar.gz -C /tmp \
-  && mv /tmp/sing-box-*/sing-box /usr/local/bin/sing-box \
-  && chmod +x /usr/local/bin/sing-box \
-  && rm -rf /tmp/sb.tar.gz /tmp/sing-box-*
+    && VERSION="$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')" \
+    && curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-${ARCH}.tar.gz" -o /tmp/sb.tar.gz \
+    && tar -xzf /tmp/sb.tar.gz -C /tmp \
+    && mv /tmp/sing-box-*/sing-box /usr/local/bin/sing-box \
+    && chmod +x /usr/local/bin/sing-box \
+    && rm -rf /tmp/sb.tar.gz /tmp/sing-box-*
 
 RUN ARCH_TRIPLE="$(uname -m)" && \
     case "$ARCH_TRIPLE" in \
@@ -69,9 +69,9 @@ RUN ARCH_TRIPLE="$(uname -m)" && \
     mv /tmp/ttyd /usr/local/bin/ttyd
 
 RUN mkdir -p /var/run/sshd /app /etc/sing-box "${TS_STATE_DIR}" /var/www/vhosts/localhost/html \
-  && sed -i 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd
+    && sed -i 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd
 
-RUN cat > /start.sh <<'EOF'
+RUN cat > /start.sh <<'SCRIPT_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -89,14 +89,14 @@ printf 'Server OK!\n' > /var/www/vhosts/localhost/html/index.html
 : > /var/www/vhosts/localhost/html/generate_204
 
 if [ -n "${CUSTOM_START_CMD}" ]; then
-  echo "Running CUSTOM_START_CMD..."
-  bash -lc "${CUSTOM_START_CMD}"
+    echo "Running CUSTOM_START_CMD..."
+    bash -lc "${CUSTOM_START_CMD}"
 fi
 
 ssh-keygen -A
 echo "root:${ROOT_PASSWORD}" | chpasswd
 
-cat > /etc/ssh/sshd_config <<EOT
+cat > /etc/ssh/sshd_config <<SSHD_EOF
 Port ${SSH_PORT}
 ListenAddress 0.0.0.0
 PermitRootLogin yes
@@ -106,9 +106,9 @@ UsePAM yes
 PrintMotd no
 ClientAliveInterval 60
 ClientAliveCountMax 3
-EOT
+SSHD_EOF
 
-cat > /etc/sing-box/config.json <<EOT
+cat > /etc/sing-box/config.json <<SB_EOF
 {
   "log": {
     "level": "info",
@@ -182,50 +182,23 @@ cat > /etc/sing-box/config.json <<EOT
       "type": "direct",
       "tag": "direct"
     }
-  ],
-  "route": {
-    "rules": [
-      {
-        "inbound": [
-          "mixed-in",
-          "vless-in",
-          "trojan-in",
-          "shadowsocks-in"
-        ],
-        "action": "sniff"
-      },
-      {
-        "inbound": [
-          "mixed-in",
-          "vless-in",
-          "trojan-in",
-          "shadowsocks-in"
-        ],
-        "action": "resolve",
-        "server": "dns-local"
-      }
-    ],
-    "final": "direct",
-    "auto_detect_interface": true,
-    "default_domain_resolver": {
-      "server": "dns-local"
-    }
-  }
+  ]
 }
-EOT
+SB_EOF
 
 if [ -n "${CUSTOM_RUN_CMD}" ]; then
-  echo "Starting CUSTOM_RUN_CMD..."
-  bash -lc "${CUSTOM_RUN_CMD}" &
-  CUSTOM_RUN_PID=$!
+    echo "Starting CUSTOM_RUN_CMD..."
+    bash -lc "${CUSTOM_RUN_CMD}" &
+    CUSTOM_RUN_PID=$!
 fi
 
 cleanup_ols_config() {
-  local cfg="/usr/local/lsws/conf/httpd_config.conf"
-  [ -f "$cfg" ] || return 0
+    local cfg="/usr/local/lsws/conf/httpd_config.conf"
 
-  sed -i -E "s/(address[[:space:]]+\*:)80/\1${PORT}/g" "$cfg"
-  sed -i -E "/listener[[:space:]]+DefaultSSL[[:space:]]*\{/,/^[[:space:]]*\}/d" "$cfg"
+    [ -f "$cfg" ] || return 0
+
+    sed -i -E "s/(address[[:space:]]+\*:)80/\1${PORT}/g" "$cfg"
+    sed -i -E "/listener[[:space:]]+DefaultSSL[[:space:]]*\{/,/^[[:space:]]*\}/d" "$cfg"
 }
 
 SB_PID=""
@@ -236,11 +209,11 @@ SSHD_PID=""
 
 cleanup_ols_config
 
-/usr/local/lsws/admin/misc/admpass.sh <<EOF
+/usr/local/lsws/admin/misc/admpass.sh <<PASS_EOF
 admin
 ${OLS_PASSWORD}
 ${OLS_PASSWORD}
-EOF
+PASS_EOF
 
 /usr/local/lsws/bin/lswsctrl start
 
@@ -251,35 +224,36 @@ ttyd -p "${TTYD_PORT}" -c "root:${ROOT_PASSWORD}" bash &
 TTYD_PID=$!
 
 if [ -n "${TS_AUTHKEY}" ]; then
-  sing-box run -c /etc/sing-box/config.json &
-  SB_PID=$!
+    sing-box run -c /etc/sing-box/config.json &
+    SB_PID=$!
 fi
 
 if [ -n "${CF_TUNNEL_TOKEN}" ]; then
-  cloudflared tunnel --no-autoupdate run --token "${CF_TUNNEL_TOKEN}" &
-  CF_PID=$!
+    cloudflared tunnel --no-autoupdate run --token "${CF_TUNNEL_TOKEN}" &
+    CF_PID=$!
 fi
 
 cleanup() {
-  [ -n "${SSHD_PID}" ] && kill "${SSHD_PID}" 2>/dev/null || true
-  [ -n "${TTYD_PID}" ] && kill "${TTYD_PID}" 2>/dev/null || true
-  [ -n "${SB_PID}" ] && kill "${SB_PID}" 2>/dev/null || true
-  [ -n "${CF_PID}" ] && kill "${CF_PID}" 2>/dev/null || true
-  [ -n "${CUSTOM_RUN_PID}" ] && kill "${CUSTOM_RUN_PID}" 2>/dev/null || true
-  /usr/local/lsws/bin/lswsctrl stop >/dev/null 2>&1 || true
+    [ -n "${SSHD_PID}" ] && kill "${SSHD_PID}" 2>/dev/null || true
+    [ -n "${TTYD_PID}" ] && kill "${TTYD_PID}" 2>/dev/null || true
+    [ -n "${SB_PID}" ] && kill "${SB_PID}" 2>/dev/null || true
+    [ -n "${CF_PID}" ] && kill "${CF_PID}" 2>/dev/null || true
+    [ -n "${CUSTOM_RUN_PID}" ] && kill "${CUSTOM_RUN_PID}" 2>/dev/null || true
+
+    /usr/local/lsws/bin/lswsctrl stop >/dev/null 2>&1 || true
 }
 
 trap cleanup EXIT INT TERM
 
 wait
-EOF
+SCRIPT_EOF
 
 RUN chmod +x /start.sh
 
 EXPOSE 8000 22 3128 10001 10002 10003 8022 7080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -fsS "http://127.0.0.1:${PORT}/generate_204" || exit 1
+CMD curl -fsS "http://127.0.0.1:${PORT}/generate_204" || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
