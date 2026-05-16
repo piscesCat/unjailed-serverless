@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 FROM litespeedtech/openlitespeed:latest
 
 ENV PORT=8000
