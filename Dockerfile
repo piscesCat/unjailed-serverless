@@ -50,8 +50,9 @@ RUN mkdir -p --mode=0755 /usr/share/keyrings \
     && apt-get install -y --no-install-recommends cloudflared \
     && rm -rf /var/lib/apt/lists/*
 
-RUN ARCH="$(dpkg --print-architecture)" \
-    && VERSION="$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')" \
+RUN ARCH=$(dpkg --print-architecture) \
+    && VERSION=$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases/latest \
+        | grep '"tag_name":' | cut -d '"' -f4 | sed 's/^v//') \
     && curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-${ARCH}.tar.gz" -o /tmp/sb.tar.gz \
     && tar -xzf /tmp/sb.tar.gz -C /tmp \
     && mv /tmp/sing-box-*/sing-box /usr/local/bin/sing-box \
