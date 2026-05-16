@@ -67,7 +67,7 @@ RUN ARCH_TRIPLE="$(uname -m)" && \
     chmod +x /tmp/ttyd && \
     mv /tmp/ttyd /usr/local/bin/ttyd
 
-RUN mkdir -p /var/run/sshd /app /var/www/vhosts/localhost/html /usr/local/lsws/Example/html "${TS_STATE_DIR}" \
+RUN mkdir -p /var/run/sshd /app /etc/sing-box "${TS_STATE_DIR}" /var/www/vhosts/localhost/html \
   && sed -i 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd
 
 RUN cat > /start.sh <<'EOF'
@@ -81,34 +81,15 @@ export PORT="${PORT:-8000}"
 export CUSTOM_START_CMD="${CUSTOM_START_CMD:-}"
 export CUSTOM_RUN_CMD="${CUSTOM_RUN_CMD:-}"
 
-mkdir -p /var/www/vhosts/localhost/html /usr/local/lsws/Example/html "${TS_STATE_DIR}"
+mkdir -p /etc/sing-box "${TS_STATE_DIR}" /var/www/vhosts/localhost/html
 
-for root in /var/www/vhosts/localhost/html /usr/local/lsws/Example/html; do
-  mkdir -p "${root}"
-  printf 'Server OK!\n' > "${root}/index.html"
-  : > "${root}/generate_204"
-done
+printf 'Server OK!\n' > /var/www/vhosts/localhost/html/index.html
+: > /var/www/vhosts/localhost/html/generate_204
 
 if [ -n "${CUSTOM_START_CMD}" ]; then
   echo "Running CUSTOM_START_CMD..."
   bash -lc "${CUSTOM_START_CMD}"
 fi
-
-configure_ols() {
-  local cfg="/usr/local/lsws/conf/httpd_config.conf"
-
-  [ -f "$cfg" ] || return 0
-
-  sed -i -E "s/(address[[:space:]]+\*:)80/\1${PORT}/g" "$cfg"
-
-  awk '
-    BEGIN { skip=0 }
-    /^[[:space:]]*listener[[:space:]]+DefaultSSL[[:space:]]*\{/ { skip=1; next }
-    skip && /^[[:space:]]*\}/ { skip=0; next }
-    skip { next }
-    { print }
-  ' "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
-}
 
 ssh-keygen -A
 echo "root:${ROOT_PASSWORD}" | chpasswd
@@ -125,12 +106,133 @@ ClientAliveInterval 60
 ClientAliveCountMax 3
 EOT
 
+cat > /etc/sing-box/config.json <<EOT
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "local",
+        "tag": "dns-local"
+      },
+      {
+        "type": "https",
+        "tag": "dns-remote",
+        "server": "1.1.1.1",
+        "server_port": 443,
+        "path": "/dns-query"
+      }
+    ]
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "0.0.0.0",
+      "listen_port": ${MIXED_PORT}
+    },
+    {
+      "type": "vless",
+      "tag": "vless-in",
+      "listen": "0.0.0.0",
+      "listen_port": ${VLESS_PORT},
+      "users": [
+        {
+          "uuid": "${VLESS_UUID}"
+        }
+      ]
+    },
+    {
+      "type": "trojan",
+      "tag": "trojan-in",
+      "listen": "0.0.0.0",
+      "listen_port": ${TROJAN_PORT},
+      "users": [
+        {
+          "password": "${TROJAN_PASSWORD}"
+        }
+      ]
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "shadowsocks-in",
+      "listen": "0.0.0.0",
+      "listen_port": ${SHADOWSOCKS_PORT},
+      "method": "${SHADOWSOCKS_METHOD}",
+      "password": "${SHADOWSOCKS_PASSWORD}"
+    }
+  ],
+  "endpoints": [
+    {
+      "type": "tailscale",
+      "tag": "tailscale-ep",
+      "state_directory": "${TS_STATE_DIR}",
+      "auth_key": "${TS_AUTHKEY}",
+      "hostname": "${TS_HOSTNAME}",
+      "system_interface": false
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "inbound": [
+          "mixed-in",
+          "vless-in",
+          "trojan-in",
+          "shadowsocks-in"
+        ],
+        "action": "sniff"
+      },
+      {
+        "inbound": [
+          "mixed-in",
+          "vless-in",
+          "trojan-in",
+          "shadowsocks-in"
+        ],
+        "action": "resolve",
+        "server": "dns-local"
+      }
+    ],
+    "final": "direct",
+    "auto_detect_interface": true,
+    "default_domain_resolver": {
+      "server": "dns-local"
+    }
+  }
+}
+EOT
+
+if [ -n "${CUSTOM_RUN_CMD}" ]; then
+  echo "Starting CUSTOM_RUN_CMD..."
+  bash -lc "${CUSTOM_RUN_CMD}" &
+  CUSTOM_RUN_PID=$!
+fi
+
+cleanup_ols_config() {
+  local cfg="/usr/local/lsws/conf/httpd_config.conf"
+  [ -f "$cfg" ] || return 0
+
+  sed -i -E "s/(address[[:space:]]+\*:)80/\1${PORT}/g" "$cfg"
+  sed -i -E "/listener[[:space:]]+DefaultSSL[[:space:]]*\{/,/^[[:space:]]*\}/d" "$cfg"
+}
+
 SB_PID=""
 CF_PID=""
 TTYD_PID=""
 CUSTOM_RUN_PID=""
+SSHD_PID=""
 
-configure_ols
+cleanup_ols_config
 /usr/local/lsws/bin/lswsctrl start
 
 /usr/sbin/sshd -D &
@@ -138,12 +240,6 @@ SSHD_PID=$!
 
 ttyd -p "${TTYD_PORT}" -c "root:${ROOT_PASSWORD}" bash &
 TTYD_PID=$!
-
-if [ -n "${CUSTOM_RUN_CMD}" ]; then
-  echo "Starting CUSTOM_RUN_CMD..."
-  bash -lc "${CUSTOM_RUN_CMD}" &
-  CUSTOM_RUN_PID=$!
-fi
 
 if [ -n "${TS_AUTHKEY}" ]; then
   sing-box run -c /etc/sing-box/config.json &
@@ -156,8 +252,8 @@ if [ -n "${CF_TUNNEL_TOKEN}" ]; then
 fi
 
 cleanup() {
-  [ -n "${TTYD_PID}" ] && kill "${TTYD_PID}" 2>/dev/null || true
   [ -n "${SSHD_PID}" ] && kill "${SSHD_PID}" 2>/dev/null || true
+  [ -n "${TTYD_PID}" ] && kill "${TTYD_PID}" 2>/dev/null || true
   [ -n "${SB_PID}" ] && kill "${SB_PID}" 2>/dev/null || true
   [ -n "${CF_PID}" ] && kill "${CF_PID}" 2>/dev/null || true
   [ -n "${CUSTOM_RUN_PID}" ] && kill "${CUSTOM_RUN_PID}" 2>/dev/null || true
@@ -171,7 +267,7 @@ EOF
 
 RUN chmod +x /start.sh
 
-EXPOSE 8000 7080 22 3128 10001 10002 10003 8022
+EXPOSE 8000 22 3128 10001 10002 10003 8022
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/generate_204" || exit 1
