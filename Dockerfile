@@ -84,7 +84,7 @@ RUN chmod +x /start.sh
 
 EXPOSE 8000 22 3128 10001 10002 10003 8022 7080 8088 8443 6379
 
-HEALTHCHECK -interval=30s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 CMD curl -fsS "http://127.0.0.1:${PORT}/generate_204" || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
