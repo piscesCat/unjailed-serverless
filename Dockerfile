@@ -22,6 +22,9 @@ ENV TTYD_PORT=8022
 ENV CUSTOM_START_CMD=""
 ENV CUSTOM_RUN_CMD=""
 ENV OLS_PASSWORD=123456
+ENV REDIS_PASSWORD=redis123456
+ENV REDIS_PORT=6379
+ENV REDIS_USER=default
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
@@ -40,6 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     procps \
     socat \
+    redis-server \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p --mode=0755 /usr/share/keyrings \
@@ -78,9 +82,9 @@ RUN mkdir -p /var/run/sshd /app /etc/sing-box "${TS_STATE_DIR}" /var/www/vhosts/
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
 
-EXPOSE 8000 22 3128 10001 10002 10003 8022 7080 8088 8443
+EXPOSE 8000 22 3128 10001 10002 10003 8022 7080 8088 8443 6379
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK -interval=30s --timeout=5s --start-period=10s --retries=3 \
 CMD curl -fsS "http://127.0.0.1:${PORT}/generate_204" || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
